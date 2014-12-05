@@ -39,7 +39,7 @@ save "C:\Users\tanja.saxell\Documents\Patent data\Merged\Orange_book_drugs_FDA_A
 
 
 ***********************************************************
-* Change data format from wide to long
+* Change data the format from wide to long
 *********************************************************** 
 
 * Challenged patents
@@ -450,28 +450,3 @@ drop _merge
 
 save "C:\Users\tanja.saxell\Documents\Patent data\Merged\Imitation_PC_PTA.dta", replace
 
-* Subset for Olena: 
-
-* Drop if in using only
-clear 
-use "C:\Users\tanja.saxell\Documents\Patent data\Originals\PTA_final.dta", clear
-
-destring Days, replace
-gen Type_num=0 
-replace Type_num=1 if Delays=="B"
-replace Type_num=2 if Delays=="C"
-replace Type_num=3 if Delays=="Non"
-replace Type_num=4 if Delays=="Overlapping"
-
-drop Delays
-drop if Patent_no==""
-reshape wide Days, i(Patent_no) j(Type_num)
-rename Days0 Delay_A
-rename Days1 Delay_B
-rename Days2 Delay_C
-rename Days3 Delay_Non
-rename Days4 Delay_Overlapping
-
-keep if Delay_Non>0
-
-outsheet using "PTA_subset.csv", comma replace

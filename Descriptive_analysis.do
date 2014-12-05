@@ -9,6 +9,7 @@ use "C:\Users\tanja.saxell\Documents\Patent data\Merged\Imitation_PC_PTA.dta", c
 drop if patentt==522982 | patentt==1712251
 * Use only approved drugs in the OB
 drop if _merge_OB_FDA==1 
+drop if missing(appl_no)
 
 gen patent_application_date_d=date(Patent_appl_date, "MDY")
 gen patent_expire_date_d=date(patent_expire_date_text, "MDY")
@@ -36,81 +37,110 @@ replace Total_PTA=0 if missing(Total_PTA)
 
 
 * expire: patent extension file
-* it seems that sometimes patent expire_date_text includes patent extensions, sometimes not
+* sometimes patent expire_date_text includes patent extensions, sometimes not
 
+* Patent extensiosn
 gen expire_extend=expire_ext+days_given
+replace expire_extend=patent_expire_date_d if missing(expire_extend)
 format expire_extend %d
 
-gen length_wo_e_years=floor((patent_expire_date_d-patent_application_date_d)/365)
+* length from the extension file
 
-gen length=patent_expire_date_d-patent_application_date_d
-replace length=expire_extend-patent_application_date_d if days_given>0
-gen length_years=length/365
-gen length_years_sq=length_years*length_years
+gen length=expire_extend-patent_application_date_d 
+* Length in months because #days/year varies
+gen length_mo=(year(expire_extend)-year(patent_application_date_d))*12+month(expire_extend)-month(patent_application_date_d)
+gen length_y=length_mo/12
+gen length_y_sq=length_y*length_y
 
-gen length_PTA_PTE_max=20*365+days_given+Total_PTA
-gen temp1=20*365+patent_application_date_d
-gen temp2=17*365+patent_grant_date_d
+* Patent term (max length): standard length+PTA+PTE
+* Compute patent term from application date
+* Standard term: takes into account leap years!
+
+gen temp1=mdy(month(patent_application_date_d),day(patent_application_date_d), year(patent_application_date_d)+20)
+gen temp2=mdy(month(patent_grant_date_d),day(patent_grant_date_d), year(patent_grant_date_d)+17)
+format temp1 temp2 %d
 gen max_temp=max(temp1,temp2)
-gen max_length=max_temp-patent_application_date_d 
-replace max_length=max_temp-patent_grant_date_d if max_temp==temp2
+format max_temp %d
+gen term_expiry=temp1
+replace term_expiry=max_temp if patent_application_date_d<date("Jun 8, 1995", "MDY")  
+replace term_expiry=term_expiry+days_given+Total_PTA
+format term_expiry %d
+gen term=term_expiry-patent_application_date_d
+gen term_mo=(year(term_expiry)-year(patent_application_date_d))*12+month(term_expiry)-month(patent_application_date_d)
+gen term_y=term_mo/12
+
 drop temp1 temp2 max_temp
 
-replace length_PTA_PTE_max=max_length if patent_application_date_d<date("Jun 8, 1995", "MDY")  
-drop max_length
+* Term in years 
 
-gen length_PTA_PTE_y=length_PTA_PTE_max/365
+corr term_y length_y
+corr term_y length_y if length_y>=20
+* 0.9113
 
 bysort patentt: gen first_o_p=1 if _n==1
 replace first_o_p=0 if missing(first_o_p)
 
-
-sum length_PTA_PTE_y length_years
+sum term_y length_y
 
 set scheme s2color
 
 * Patent length vs. max length
 
-twoway (histogram length_PTA_PTE_y if first_o_p==1, color(green)) ///
-        (histogram length_years if first_o_p==1,  ///
+twoway (histogram term_y if first_o_p==1, color(green)) ///
+        (histogram length_y if first_o_p==1,  ///
          fcolor(none) lcolor(black)), graphregion(color(white)) bgcolor(white) legend(order(1 "Maximum length" 2 "Length in Orange Book"))
 
+graph export "C:\Users\tanja.saxell\Documents\GitHub\Codes\Results\Length_vs_term.pdf", replace
+		 
 * Effective patent life (max) 
-gen max_expiration_d=length_PTA_PTE_max+patent_application_date_d
-format max_expiration_d %d 
 
-gen effective_life=(max_expiration_d-approval_date_d)/365
-hist effective_life if first_o_p==1, title("") xtitle("Maximum effective life (years)") graphregion(color(white)) bgcolor(white)  
+gen effective_life=(year(term_expiry)-year(approval_date_d))*12+month(term_expiry)-month(approval_date_d)
+gen effective_life_y=effective_life/12
+hist effective_life_y if first_o_p==1, title("") xtitle("Maximum effective life (years)") graphregion(color(white)) bgcolor(white)  
 
-gen effective_ext=(days_given+Total_PTA)/(max_expiration_d-approval_date_d)
-kdensity effective_ext if first_o_p==1, title("") xtitle("Extensions/maximum effective life (years)") graphregion(color(white)) bgcolor(white)  
+graph export "C:\Users\tanja.saxell\Documents\GitHub\Codes\Results\Effective_life.pdf", replace
+
+gen effective_ext=(days_given+Total_PTA)/(term_expiry-approval_date_d)
+sum effective_ext
+hist effective_ext if first_o_p==1, title("") xtitle("Extensions/maximum effective life (years)") graphregion(color(white)) bgcolor(white)  
+hist effective_ext if first_o_p==1 & days_given+Total_PTA>0, title("") xtitle("Extensions/maximum effective life, PTA+PTE>0") graphregion(color(white)) bgcolor(white)  
+graph export "C:\Users\tanja.saxell\Documents\GitHub\Codes\Results\Extension_rel_effectivelife.pdf", replace
 
 
 * Average application time by(grant_year)
 
-gen p_grant_year=substr(Patent_appl_date, -4, 4)
-destring p_grant_year, replace
-replace p_grant_year=1990 if p_grant_year<=1990
-label var p_grant_year "Patent grant year"
-gen Time=(patent_grant_date_d-patent_application_date_d)/365
+gen p_appl_year=substr(Patent_appl_date, -4, 4)
+destring p_appl_year, replace
+replace p_appl_year=1990 if p_appl_year<=1990
+label var p_appl_year "Patent application year"
+gen Time=((year(patent_grant_date_d)-year(patent_application_date_d))*12+month(patent_grant_date_d)-month(patent_application_date_d))/12
 label var Time "Patent application time, years"
 
 set scheme s2color
-twoway fpfitci Time p_grant_year if first_o_p==1, title("Patent application time (years)") xtitle("Patent grant year") xlabel(minmax) graphregion(color(white)) bgcolor(white)
+twoway fpfitci Time p_appl_year if first_o_p==1, title("Patent application time (years)") xtitle("Patent application year") xlabel(minmax) graphregion(color(white)) bgcolor(white)
+graph export "C:\Users\tanja.saxell\Documents\GitHub\Codes\Results\Applicationtime_year.pdf", replace
 
 hist Time if first_o_p==1, title("") xtitle("Patent application time (years)") graphregion(color(white)) bgcolor(white)  
+graph export "C:\Users\tanja.saxell\Documents\GitHub\Codes\Results\Applicationtime.pdf", replace
 
-gen comp_time=max_expiration_d-Chall_approval_date_min 	
-gen comp_time2=patent_expire_date_d-Chall_approval_date_min 		
+* max_expiration_d: term+patent_application_date, note: term is calculated always from 
+* patent applicate date!
+gen comp_time=((year(term_expiry)-year(Chall_approval_date_min))*12+month(term_expiry)-month(Chall_approval_date_min))/12
+hist comp_time if first_o_p==1, title("") xtitle("Patent term expiry-first PIV challenge (years)") graphregion(color(white)) bgcolor(white)  
+graph export "C:\Users\tanja.saxell\Documents\GitHub\Codes\Results\Expiry_challange.pdf", replace
 	
-gen length_PTA_PTE_sq=length_PTA_PTE_max*length_PTA_PTE_max
-gen length_sq_years=length_years*length_years
+gen term_sq=term*term
+gen length_sq_years=length_y*length_y
 gen examiner=ex_surname+" "+ex_name
 
 * Average number of claims per examiner, each patent is counted only once
 sort patentt
 
+****************************************
+* IV:s
 * Average number of claims per examiner, each patent is counted only once
+* NEXT: Compute these for different time periods (utilize over-time variation)
+* CONTINUE HERE!
 
 bysort patent_no examiner: gen first_o=1 if _n==1
 replace first_o=0 if missing(first_o)
@@ -132,55 +162,28 @@ gen at_ex_excl=count_at_per_examnr-application_time
 
 gen ave_at_excl=at_ex_excl/(sum_patents_per_examnr-1)
 
+********************************************************
+* gen drop_ind2=0
+* replace drop_ind2=1 if Challenged_active_ingredient==1 & IV_challenged_indicator==0
 
-***************************************
-* Application time analysis:
-
-
-gen p_appl_year=substr(Patent_appl_date, -4,.)
-destring p_appl_year, replace
-hist application_time if first_o==1, title("Patent application time in years")
-
-tab p_appl_year if first_o==1, summarize(application_time)
-tab p_appl_year if first_o==1, summarize(length_years)
-
-
-hist sum_patents_per_examnr if first_o==1 & drop_ind2==0, title("Histogram: the sum of patents per examiner") xtitle("The sum of patents per examiner")
-hist ave_at_excl if first_o==1 & drop_ind2==0, title("Average application time per examiner") xtitle("Years")
-
-hist ave_claims_excl if first_o==1 & drop_ind2==0, title("Average nbr of claims per examiner") xtitle("Excluding an analyzed patent")
 
 gen After_may_29_2000=0
 replace After_may_29_2000=1 if patent_application_date_d>=date("May 29, 2000", "MDY")
 
-gen drop_ind2=0
-replace drop_ind2=1 if Challenged_active_ingredient==1 & IV_challenged_indicator==0
-
-
-sum application_time if first_o==1 & After_may_29_2000==1
-sum application_time if first_o==1 & After_may_29_2000==1 & application_time>=3
-
-gen ind1=0
-replace ind1=1 if After_may_29_2000==1 & application_time>=3
-
-sum length_years if application_time>=3 & After_may_29_2000==1 & length_years>20 & days_given==0
-sum length_years if application_time>=3 & After_may_29_2000==0 & length_years>20 & days_given==0
-
 gen inter=ave_at_excl*After_may_29_2000
+reg term ave_at_excl After_may_29_2000 if first_o==1 
 
 * Original utility and plant patents issuing from applications filed on or after May 29, 2000 will be eligible for patent term adjustment if issuance of the patent is delayed due to one or more of the listed administrative delays.  
-reg claims_num ave_claims_excl if first_o==1 & drop_ind2==0
-reg application_time ave_at_excl if first_o==1 & drop_ind2==0
-reg length_years After_may_29_2000 ave_at_excl inter if first_o==1 & drop_ind2==0
-reg length_years After_may_29_2000 ave_at_excl inter if drop_ind2==0
-reg length_years application_time if first_o==1 & drop_ind2==0
+reg claims_num ave_claims_excl if first_o==1
+reg application_time ave_at_excl if first_o==1
 
-reg length_PTA_PTE_max After_may_29_2000 ave_at_excl inter if first_o==1 & drop_ind2==0
-reg length_PTA_PTE_max After_may_29_2000 ave_at_excl inter if drop_ind2==0
+reg term After_may_29_2000 ave_at_excl inter if first_o==1 & 
+reg term After_may_29_2000 ave_at_excl inter if first_o==1
+reg length_y After_may_29_2000 ave_at_excl inter if first_o==1
 
 gen iter_at_after292000=application_time*After_may_29_2000
 
-reg length_years After_may_29_2000 application_time iter_at_after292000 if first_o==1 & drop_ind2==0
+reg length_y After_may_29_2000 application_time iter_at_after292000 if first_o==1 
 
 gen PC=0
 replace PC=1 if PC_applicant~=""
@@ -190,7 +193,7 @@ gen approval_year=substr(approval_date, -4,.)
 destring approval_year, replace
 
 
-* PC: merge by ingredient dfroute strength
+* PC: merged by ingredient dfroute strength
 
 format patent_expire_date_d %d
 
@@ -202,7 +205,7 @@ gen diff2=floor(diff1/365)
 hist diff1 if first_o_p==1, title("patent expire date - IV appr. date") xtitle("Nbr of days")
 hist diff2 if first_o_ps==1, title("patent expire date - IV appr. date") xtitle("Nbr of years")
 hist length if first_o_ps==1, title("patent length") xtitle("Nbr of days")
-hist length_years if first_o_ps==1, title("patent length") xtitle("Nbr of years")
+hist length_y if first_o_ps==1, title("patent length") xtitle("Nbr of years")
 
 encode ingredient, gen(ingred_fe)
 xtset ingred_fe
@@ -235,9 +238,9 @@ bysort appl_no patentt: gen temp1=1 if _n==1
 bysort appl_no: egen patents_per_appl=sum(temp1)
 drop temp1
 
-gen term_yr=length_PTA_PTE_max/365
+gen term_yr=term/365
 gen term_yr_sq=term_yr*term_yr
-gen length_PTA_PTE_max_sq=length_PTA_PTE_max*length_PTA_PTE_max
+gen term_sq=term*term
 gen RE_t=substr(patent_no,1,2)
 gen RE=0
 replace RE=1 if RE_t=="RE"
@@ -289,10 +292,10 @@ ivregress 2sls IV_challenged_indicator length approval_year (claims_num=ave_clai
 ivregress 2sls IV_challenged_indicator approval_year claims_num (length=ave_at_excl) if drop_ind2==0 & drop_ind2==0
 
 
-ivregress 2sls IV_challenged_indicator nme_applicant nai_applicant patents_per_appl tablet capsule injectable After_may_29_2000 claims_num (length_years=ave_at_excl inter) if drop_ind2==0 & drop_ind2==0, first
+ivregress 2sls IV_challenged_indicator nme_applicant nai_applicant patents_per_appl tablet capsule injectable After_may_29_2000 claims_num (length_y=ave_at_excl inter) if drop_ind2==0 & drop_ind2==0, first
 
 gen ave_at_excl_sq=ave_at_excl*ave_at_excl
 gen inter_ave_at_sq=ave_at_excl_sq*After_may_29_2000
 
-ivreg2 IV_challenged_indicator nme_applicant nai_applicant patents_per_appl tablet capsule injectable After_may_29_2000 (length_years length_years_sq claims_num=ave_at_excl ave_at_excl_sq inter inter_ave_at_sq ave_claims_excl) if drop_ind2==0 & drop_ind2==0, gmm2s robust first
+ivreg2 IV_challenged_indicator nme_applicant nai_applicant patents_per_appl tablet capsule injectable After_may_29_2000 (length_y length_y_sq claims_num=ave_at_excl ave_at_excl_sq inter inter_ave_at_sq ave_claims_excl) if drop_ind2==0 & drop_ind2==0, gmm2s robust first
 
